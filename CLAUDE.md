@@ -8,7 +8,7 @@ Source spec: `Assignment 2  .pdf` (this directory) — read it directly if any i
 Build a multi-object detection + tracking system:
 - **Detection**: Faster R-CNN, fine-tuned on the selected dataset.
 - **Tracking**: temporal consistency checks so detected objects keep a stable identity across frames, plus an adaptive tracking algorithm (Kalman filter / SORT) that adjusts to object speed and direction.
-- **Dataset**: [SportsMOT](https://deeperaction.github.io/datasets/sportsmot.html) (fast-moving multi-athlete sports video — good stress test for identity switches).
+- **Dataset**: MOT17 (a pedestrian-tracking MOT benchmark; the assignment allows either SportsMOT or MOT17, and SportsMOT's dataset page and MOT17's official host (`motchallenge.net`) were both effectively unreachable, so we pull MOT17 from a Kaggle mirror instead — see Data Preprocessing notes below). The official SportsMOT page is [here](https://deeperaction.github.io/datasets/sportsmot.html) if you want to switch back to it later.
 - Reference papers (for the notebook's related-work/justification section, not for copying): arXiv:2006.04567 ("Real-Time Object Detection and Tracking Using Faster R-CNN"), ScienceDirect S0031320321001234 ("A Survey on Object Detection and Tracking").
 
 ## Grading rubric → notebook mapping
@@ -30,7 +30,7 @@ Everything runs inside the Colab notebook itself. There is no local `pyproject.t
 **First cell of the notebook:**
 ```python
 # Runtime > Change runtime type > T4 GPU (or better) before running this
-!pip install -q py-motmetrics filterpy
+!pip install -q motmetrics filterpy torchmetrics kaggle
 # torch, torchvision, opencv-python, numpy, pandas, matplotlib, tqdm, scikit-learn
 # already ship in the Colab base image — no need to reinstall them
 ```
@@ -45,7 +45,7 @@ from google.colab import drive
 drive.mount('/content/drive')
 # e.g. work under /content/drive/MyDrive/cv_assignment2/
 ```
-Download the SportsMOT subset straight into the ephemeral `/content/` disk each session (fast Colab network, avoids burning Drive quota) — only persist trained checkpoints and final outputs to Drive.
+Download the MOT17 sequence straight into the ephemeral `/content/` disk each session, but cache the (small, single-sequence) extracted result to Drive after the first download — the source dataset is several GB, so re-running the full download every session wastes both time and Drive/Colab quota. Requires a Kaggle API token stored as Colab secrets (`KAGGLE_USERNAME` / `KAGGLE_KEY`, via the key icon in Colab's left sidebar) — see the notebook's Data Preprocessing section for the one-time setup steps and the exact Kaggle dataset reference used.
 
 ## Project layout
 
@@ -54,9 +54,17 @@ Local machine (this repo — for planning/editing with Claude Code, not executed
 assignment_2/
 ├── CLAUDE.md
 ├── Assignment 2  .pdf          # original spec, do not modify
-└── notebooks/
-    └── CV_assignment2_<group>_PS3.ipynb   # authored locally, then opened/run in Colab
+├── notebooks/
+│   └── CV_assignment2_<group>_PS3.ipynb   # authored locally, then opened/run in Colab
+├── scripts/                    # local-machine helpers, not part of the Colab pipeline
+│   ├── download_mot17_remotezip.py  # partial-download attempt via motchallenge.net (currently unreachable)
+│   └── download_mot17_aria2c.sh      # full-archive parallel-download fallback for the same host
+└── data/                        # gitignored; local scratch space if you download anything by hand
 ```
+The two `scripts/` helpers target the official `motchallenge.net` host directly, which was unreachable
+(network-level failure, not a 404) when this was built — the notebook itself now downloads MOT17 from a
+Kaggle mirror instead (see Data Preprocessing below), so those scripts are optional/dormant unless
+motchallenge.net comes back and you want to try the direct route again.
 
 Since Colab runs a single self-contained notebook (no local `src/` package to import from unless you push it somewhere Colab can reach), keep the notebook itself well-organized instead of splitting into modules:
 - Group reusable code (dataset class, Kalman/SORT tracker, metrics helpers) into a few dedicated code cells near the top, under clear markdown headers (e.g. "Utility: Dataset", "Utility: Tracker", "Utility: Metrics") — this gets you most of the readability benefit of separate files without needing multi-file imports in Colab.
@@ -68,7 +76,7 @@ The rubric explicitly penalizes "excessively long notebooks" and "irrelevant len
 
 1. **Intro** (markdown) — problem statement, dataset, approach summary.
 2. **Data Preprocessing**
-   - Extract frames from SportsMOT clips, normalize (resize + scale/mean-std normalization to match Faster R-CNN's expected input).
+   - Extract frames from the MOT17 sequence (or SportsMOT, if you switch back), normalize (resize + scale/mean-std normalization to match Faster R-CNN's expected input).
    - Augmentation: random crop, horizontal flip, color jitter — applied only to training split.
 3. **Model Development**
    - Load `torchvision`'s Faster R-CNN (ResNet-50-FPN backbone), replace the classification head for the dataset's classes, fine-tune.
@@ -76,7 +84,7 @@ The rubric explicitly penalizes "excessively long notebooks" and "irrelevant len
    - Adaptive tracking: implement SORT (Kalman filter for motion prediction + Hungarian matching), tuned to adapt to object speed/direction.
 4. **Evaluation**
    - Detection: mAP (via `torchmetrics` or manual COCO-style eval).
-   - Tracking: MOTA, MOTP, ID-switch count, IDF1 — use `py-motmetrics` rather than hand-rolling these.
+   - Tracking: MOTA, MOTP, ID-switch count, IDF1 — use `motmetrics` (PyPI package name; GitHub repo is `py-motmetrics`) rather than hand-rolling these. Note: the current PyPI release still calls the removed `np.asfarray`, so shim it back in under NumPy 2.x rather than downgrading NumPy (see the notebook's setup cell).
    - Report inference speed (FPS) since it's called out explicitly.
    - Optional: compare against a baseline tracker (e.g. plain IoU tracker without Kalman) to show the adaptive tracker's benefit.
 5. **Analysis & Justification** (markdown-heavy) — where tracking failed (occlusion, fast motion, crowded scenes), why, and what the temporal-consistency/adaptive-tracking additions did or didn't fix.
